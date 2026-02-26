@@ -4,7 +4,7 @@ import re
 import requests
 import io
 from datetime import datetime
-import google.generativeai as genai
+from openai import OpenAI
 from docx import Document as DocxDocument
 from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -602,7 +602,7 @@ def fetch_google_doc(url: str):
             "Make sure it's a standard Google Docs link (docs.google.com/document/d/...)."
         )
 
-    # FIX: warn if blog is very long before hitting Gemini
+    # FIX: warn if blog is very long before hitting OpenAI
     export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
     try:
         resp = requests.get(export_url, timeout=30)
@@ -624,7 +624,7 @@ def fetch_google_doc(url: str):
     if len(text) > 30000:
         raise ValueError(
             f"This document is very long ({len(text):,} characters). "
-            "Please trim it to under ~30,000 characters to avoid Gemini token limit issues."
+            "Please trim it to under ~30,000 characters to avoid token limit issues."
         )
 
     lines = [l.strip() for l in text.splitlines() if l.strip()]
@@ -633,14 +633,10 @@ def fetch_google_doc(url: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GEMINI API
+# OPENAI API
 # ─────────────────────────────────────────────────────────────────────────────
 def run_initial_review(api_key: str, blog_text: str) -> str:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        system_instruction=MASTER_PROMPT
-    )
+    client = OpenAI(api_key=api_key)
     prompt = (
         "Please review the following Leap Scholar blog in full.\n\n"
         "Apply the complete 5-step SOP and all 10 pattern rules (K-1 through K-10).\n\n"
@@ -650,23 +646,33 @@ def run_initial_review(api_key: str, blog_text: str) -> str:
         "Here is the blog:\n\n"
         f"{blog_text}"
     )
-    response = model.generate_content(prompt)
-    return response.text
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": MASTER_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=8000,
+    )
+    return response.choices[0].message.content
 
 
 def run_followup(api_key: str, history: list, user_message: str) -> str:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        system_instruction=MASTER_PROMPT
+    client = OpenAI(api_key=api_key)
+    # history stored as OpenAI-format messages list
+    messages = [{"role": "system", "content": MASTER_PROMPT}] + history + [
+        {"role": "user", "content": user_message}
+    ]
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        max_tokens=4000,
     )
-    chat = model.start_chat(history=history)
-    response = chat.send_message(user_message)
-    return response.text
+    return response.choices[0].message.content
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PARSE GEMINI RESPONSE
+# PARSE OPENAI RESPONSE
 # FIX: Instead of a broken character-split fallback, surface a clear error
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_response(text: str):
@@ -680,7 +686,7 @@ def parse_response(text: str):
 
     if not review and not rewrite:
         raise ValueError(
-            "Gemini did not return the expected output markers.\n\n"
+            "The model did not return the expected output markers.\n\n"
             "This can happen if the blog is too complex or the model hit a limit. "
             "Please try again or use '🔄 New Review' to reset."
         )
@@ -987,7 +993,7 @@ defaults = {
     "messages": [], "phase": "home", "doc_url": "",
     "blog_text": "", "blog_title": "",
     "review_bytes": None, "rewrite_bytes": None,
-    "gemini_history": [], "review_done": False,
+    "openai_history": [], "review_done": False,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -1004,17 +1010,17 @@ with st.sidebar:
                 color:#22c55e;margin-bottom:16px;margin-top:8px;">✦ Configuration</div>
     """, unsafe_allow_html=True)
 
-    default_key = st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else ""
+    default_key = st.secrets.get("OPENAI_API_KEY", "") if hasattr(st, "secrets") else ""
     api_key = st.text_input(
-        "Gemini API Key", type="password", placeholder="AIza...",
+        "OpenAI API Key", type="password", placeholder="sk-...",
         value=default_key,
-        help="Get your free key at aistudio.google.com"
+        help="Get your key at platform.openai.com/api-keys"
     )
 
     st.markdown("""
     <div style="font-size:0.75rem;color:#6b7280;margin-top:8px;line-height:1.7;">
         Your key is never stored or logged.<br>
-        Uses <strong style="color:#22c55e">gemini-2.0-flash</strong><br><br>
+        Uses <strong style="color:#22c55e">gpt-4o</strong><br><br>
         📄 Google Doc must be set to<br><em>"Anyone with the link can view"</em>
     </div>
     """, unsafe_allow_html=True)
@@ -1079,7 +1085,7 @@ if st.session_state.phase == "home":
 
     if go:
         if not api_key:
-            st.error("⚠️ Please enter your Gemini API key in the sidebar first.")
+            st.error("⚠️ Please enter your OpenAI API key in the sidebar first.")
         elif not url:
             st.markdown("""
             <div style="text-align:center;color:#ef4444;font-size:0.85rem;margin-top:12px;">
@@ -1156,9 +1162,9 @@ else:
                 st.session_state.review_bytes = build_review_docx(review_text, st.session_state.blog_title)
                 st.session_state.rewrite_bytes = build_rewritten_docx(rewritten_text, st.session_state.blog_title)
                 st.session_state.review_done = True
-                st.session_state.gemini_history = [
-                    {"role": "user", "parts": [f"Review this Leap Scholar blog:\n\n{st.session_state.blog_text}"]},
-                    {"role": "model", "parts": [raw]},
+                st.session_state.openai_history = [
+                    {"role": "user", "content": f"Review this Leap Scholar blog:\n\n{st.session_state.blog_text}"},
+                    {"role": "assistant", "content": raw},
                 ]
                 st.session_state.messages.append({
                     "role": "ai",
@@ -1244,19 +1250,19 @@ else:
 
         if send and follow_up:
             if not api_key:
-                st.warning("Please enter your Gemini API key in the sidebar.")
+                st.warning("Please enter your OpenAI API key in the sidebar.")
             elif not st.session_state.review_done:
                 st.warning("Please wait for the review to complete before sending follow-up questions.")
-            elif not st.session_state.gemini_history:
+            elif not st.session_state.openai_history:
                 st.warning("No review context found. Please use '🔄 New Review' to start fresh.")
             else:
                 st.session_state.messages.append({"role": "user", "content": follow_up})
                 with st.spinner("Krutika AI is thinking..."):
                     try:
-                        reply = run_followup(api_key, st.session_state.gemini_history, follow_up)
-                        st.session_state.gemini_history += [
-                            {"role": "user", "parts": [follow_up]},
-                            {"role": "model", "parts": [reply]},
+                        reply = run_followup(api_key, st.session_state.openai_history, follow_up)
+                        st.session_state.openai_history += [
+                            {"role": "user", "content": follow_up},
+                            {"role": "assistant", "content": reply},
                         ]
                         st.session_state.messages.append({"role": "ai", "content": reply})
                     except Exception as e:
