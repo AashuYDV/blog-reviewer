@@ -10,6 +10,8 @@ from docx.shared import Pt, RGBColor, Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from bs4 import BeautifulSoup
+from urllib.parse import unquote
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -22,7 +24,7 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CSS
+# CSS — UNTOUCHED
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -254,7 +256,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"],
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MASTER PROMPT
+# MASTER PROMPT — UNTOUCHED except [LINK:] awareness added
 # ─────────────────────────────────────────────────────────────────────────────
 MASTER_PROMPT = """
 You are Krutika, the senior editorial reviewer at Leap Scholar. You have been reviewing blogs for this platform for years and have a sharp, consistent, demanding-but-constructive reviewing style.
@@ -286,6 +288,12 @@ PRINCIPLE 4 — HEADERS MUST EARN THEIR PLACE
 
 PRINCIPLE 5 — DATA MUST BE SOURCED AND VISUALIZED
 Stats, fees, deadlines, rankings = must have source attribution. Multiple data points = must become a table.
+
+CRITICAL — RECOGNISING EXISTING SOURCES:
+The blog text you receive may contain [LINK: url] markers inline. These mean a hyperlink
+already exists at that exact point in the original Google Doc. Treat any stat or claim
+followed by a [LINK: ...] marker as already sourced. Do NOT flag these as missing sources.
+Only flag claims that have NO [LINK: ...] marker AND no named source attribution nearby.
 
 PRINCIPLE 6 — HEADING HIERARCHY MUST BE CORRECT
 "1. Bold Label" inside body paragraphs is NOT an H3. Flag every instance.
@@ -333,7 +341,7 @@ Introduction:
 Body:
 - Clear H2 → H3 hierarchy; no numbered bold text as sub-headings
 - Each section opens with a BLUF sentence
-- All data points have source attribution
+- All data points have source attribution ([LINK: url] = already sourced, do not flag)
 - No paragraphs >4 lines covering multiple ideas
 - Tables/bullets where data comparison appears
 - Key numbers, fees, dates in **bold**
@@ -394,6 +402,7 @@ Partial funding mentioned without total context = flag.
 K-5 — ALL STATS NEED SOURCE LINKS
 Any stat, policy update, ranking, fee, or deadline without attribution = flag individually.
 "Please link the official source for this stat."
+IMPORTANT: If the stat already has a [LINK: url] next to it, it is sourced — do NOT flag it.
 
 K-6 — FINANCIAL DATA → TABLE
 Multiple financial figures in paragraph form = flag.
@@ -523,9 +532,9 @@ EXAMPLE 3 — Data:
 Original: "funding ranges from $30,000 to $40,000"
 Fix: "The fellowship covers up to **$100,000+** in total value. [TABLE RECOMMENDED: tuition / stipend / airfare / insurance / settling allowance]"
 
-EXAMPLE 4 — Source:
-Original: "Singapore's ICA has empowered airlines to issue No-Boarding Directives."
-Fix: Add [SOURCE NEEDED: Singapore ICA Official Announcement]
+EXAMPLE 4 — Existing link correctly recognised:
+Blog text: "According to The Times of India [LINK: https://timesofindia.com/article/...], 70% of Indian students..."
+Action: Do NOT flag this as a missing source. The [LINK:] marker confirms a hyperlink exists. Continue.
 
 EXAMPLE 5 — Keep Hook:
 Original: "Germany is in trouble. The good kind of trouble..."
@@ -545,6 +554,7 @@ NEVER approve a Key Takeaways section.
 NEVER approve numbered bold sub-points instead of H3s.
 NEVER approve first-person intro phrases.
 NEVER produce generic feedback — every comment must be specific to the actual blog text.
+NEVER flag a stat as missing a source if it already has a [LINK: url] marker next to it.
 
 ════════════════════════════════════════
 REVIEW COMMENT TONE
@@ -582,9 +592,50 @@ Key Takeaways present → Flag and remove entirely.
 First-person phrases → Flag every instance and remove all.
 """
 
+# ─────────────────────────────────────────────────────────────────────────────
+# FACT CHECK PROMPT
+# ─────────────────────────────────────────────────────────────────────────────
+FACT_CHECK_PROMPT = """
+You are a professional fact-checker specialising in education, study abroad, immigration policy, and international universities.
+
+Your job: find every specific claim, number, statistic, percentage, fee, deadline, ranking, or policy mentioned in the blog. Search the web to verify each one. Produce a clear verdict per fact.
+
+OUTPUT FORMAT — use EXACTLY these markers and nothing else outside them:
+
+---FACT CHECK START---
+
+FACT CHECK SUMMARY:
+Total facts checked: [number]
+✅ Verified: [number]
+⚠️ Partially correct / outdated: [number]
+🔴 Incorrect / Unverifiable: [number]
+
+---FACT CHECK ITEMS---
+
+FACT: [Quote the exact claim from the blog]
+VERDICT: [✅ VERIFIED / ⚠️ PARTIALLY CORRECT / ⚠️ OUTDATED / 🔴 INCORRECT / ⚠️ UNVERIFIABLE]
+DETAIL: [What the search found. If incorrect, state the correct figure. Max 2 sentences.]
+SOURCE: [URL or source name used to verify]
+
+[Repeat FACT / VERDICT / DETAIL / SOURCE block for every fact found]
+
+---FACT CHECK END---
+
+RULES:
+- Check EVERY specific number, percentage, fee, ranking, date, or policy claim
+- If a fact has a [LINK: url] marker next to it in the blog, visit that URL and verify whether the linked source actually supports the claim
+- Mark ⚠️ PARTIALLY CORRECT if a number is close but slightly off
+- Mark ⚠️ UNVERIFIABLE if no reliable source can be found — do not guess
+- Mark ⚠️ OUTDATED if the fact was true previously but is no longer current
+- DETAIL must be concise — 1–2 sentences maximum
+- Do NOT check opinions or general statements — only specific verifiable claims with numbers, dates, or named policies
+"""
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GOOGLE DOC FETCHER
+# CHANGE 1 — GOOGLE DOC FETCHER
+# Switched from ?format=txt to ?format=html
+# Uses BeautifulSoup to extract hyperlinks and inject [LINK: url] markers inline
 # ─────────────────────────────────────────────────────────────────────────────
 def extract_doc_id(url: str):
     for pattern in [r"/document/d/([a-zA-Z0-9_-]+)", r"id=([a-zA-Z0-9_-]+)"]:
@@ -602,8 +653,8 @@ def fetch_google_doc(url: str):
             "Make sure it's a standard Google Docs link (docs.google.com/document/d/...)."
         )
 
-    # FIX: warn if blog is very long before hitting OpenAI
-    export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=txt"
+    # Export as HTML to preserve all hyperlinks
+    export_url = f"https://docs.google.com/document/d/{doc_id}/export?format=html"
     try:
         resp = requests.get(export_url, timeout=30)
     except requests.exceptions.ConnectionError:
@@ -617,9 +668,53 @@ def fetch_google_doc(url: str):
     if resp.status_code != 200:
         raise ConnectionError(f"Could not fetch document (HTTP {resp.status_code}). Please check the link.")
 
-    text = resp.text.strip()
-    if not text:
+    if not resp.text.strip():
         raise ValueError("The document appears to be empty.")
+
+    # Parse HTML
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    # Replace every <a href="...">anchor text</a> with: anchor text [LINK: real_url]
+    # This makes existing hyperlinks visible to the review engine as [LINK: url] markers
+    for tag in soup.find_all("a", href=True):
+        href = tag.get("href", "").strip()
+        link_text = tag.get_text()
+
+        # Skip internal Google Doc anchors and empty/javascript links
+        if not href or href.startswith("#") or href.startswith("javascript"):
+            tag.replace_with(link_text)
+            continue
+
+        # Google Docs wraps external links in a redirect — unwrap the real URL
+        real_url = href
+        if "google.com/url" in href:
+            q_match = re.search(r'[?&]q=([^&]+)', href)
+            if q_match:
+                real_url = unquote(q_match.group(1))
+
+        # Inject [LINK: url] inline right after the anchor text
+        tag.replace_with(f"{link_text} [LINK: {real_url}]")
+
+    # Extract plain text, using newline as separator
+    text = soup.get_text(separator="\n")
+
+    # Clean up: collapse excess blank lines (max 2 consecutive)
+    lines = [l.strip() for l in text.splitlines()]
+    cleaned_lines = []
+    blank_count = 0
+    for line in lines:
+        if line == "":
+            blank_count += 1
+            if blank_count <= 2:
+                cleaned_lines.append(line)
+        else:
+            blank_count = 0
+            cleaned_lines.append(line)
+
+    text = "\n".join(cleaned_lines).strip()
+
+    if not text:
+        raise ValueError("The document appears to be empty after processing.")
 
     if len(text) > 30000:
         raise ValueError(
@@ -627,19 +722,23 @@ def fetch_google_doc(url: str):
             "Please trim it to under ~30,000 characters to avoid token limit issues."
         )
 
-    lines = [l.strip() for l in text.splitlines() if l.strip()]
-    title = lines[0] if lines else "Untitled Blog"
+    non_empty = [l for l in cleaned_lines if l.strip()]
+    title = non_empty[0] if non_empty else "Untitled Blog"
+
     return text, title
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OPENAI API
+# OPENAI — MAIN REVIEW (unchanged)
 # ─────────────────────────────────────────────────────────────────────────────
 def run_initial_review(api_key: str, blog_text: str) -> str:
     client = OpenAI(api_key=api_key)
     prompt = (
         "Please review the following Leap Scholar blog in full.\n\n"
         "Apply the complete 5-step SOP and all 10 pattern rules (K-1 through K-10).\n\n"
+        "IMPORTANT: Anywhere you see [LINK: url] in the blog text, a hyperlink already "
+        "exists there in the original document. Treat it as a valid source citation. "
+        "Do NOT flag these as missing sources.\n\n"
         "Produce BOTH outputs separated by the EXACT markers:\n"
         "---REVIEW DOCUMENT START--- ... ---REVIEW DOCUMENT END---\n"
         "---REWRITTEN BLOG START--- ... ---REWRITTEN BLOG END---\n\n"
@@ -657,9 +756,45 @@ def run_initial_review(api_key: str, blog_text: str) -> str:
     return response.choices[0].message.content
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CHANGE 2 — FACT CHECKER
+# Separate second API call with web_search_preview tool enabled
+# Runs independently of the main review — does not affect review quality
+# ─────────────────────────────────────────────────────────────────────────────
+def run_fact_check(api_key: str, blog_text: str) -> str:
+    client = OpenAI(api_key=api_key)
+    prompt = (
+        "Fact-check the following blog post. Find every specific number, statistic, "
+        "percentage, fee, deadline, ranking, or policy claim. Search the web to verify "
+        "each one. Use the exact output format specified in your instructions.\n\n"
+        "Blog text:\n\n"
+        f"{blog_text}"
+    )
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": FACT_CHECK_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        tools=[{"type": "web_search_preview"}],
+        max_tokens=4000,
+    )
+    return response.choices[0].message.content
+
+
+def parse_fact_check(text: str) -> str:
+    """Extract content between fact check markers."""
+    m = re.search(r"---FACT CHECK START---(.*?)---FACT CHECK END---", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OPENAI — FOLLOWUP (unchanged)
+# ─────────────────────────────────────────────────────────────────────────────
 def run_followup(api_key: str, history: list, user_message: str) -> str:
     client = OpenAI(api_key=api_key)
-    # history stored as OpenAI-format messages list
     messages = [{"role": "system", "content": MASTER_PROMPT}] + history + [
         {"role": "user", "content": user_message}
     ]
@@ -672,8 +807,7 @@ def run_followup(api_key: str, history: list, user_message: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PARSE OPENAI RESPONSE
-# FIX: Instead of a broken character-split fallback, surface a clear error
+# PARSE RESPONSE — unchanged
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_response(text: str):
     review, rewrite = "", ""
@@ -699,7 +833,7 @@ def parse_response(text: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DOCX HELPERS
+# DOCX HELPERS — unchanged
 # ─────────────────────────────────────────────────────────────────────────────
 def add_hr(doc, color="1a56a0"):
     p = doc.add_paragraph()
@@ -717,8 +851,6 @@ def add_hr(doc, color="1a56a0"):
 
 
 def mixed_run(para, text):
-    """Render **bold** and *italic* markdown inline."""
-    # Handle bold first, then italic
     segments = re.split(r'(\*\*.*?\*\*|\*.*?\*)', text)
     for part in segments:
         if part.startswith("**") and part.endswith("**") and len(part) > 4:
@@ -732,10 +864,6 @@ def mixed_run(para, text):
         r.font.size = Pt(11)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SAFE FILENAME HELPER
-# FIX: handles unicode/international characters in blog titles
-# ─────────────────────────────────────────────────────────────────────────────
 def safe_filename(title: str, max_len: int = 40) -> str:
     normalized = unicodedata.normalize('NFKD', title)
     ascii_title = normalized.encode('ascii', 'ignore').decode('ascii')
@@ -744,8 +872,9 @@ def safe_filename(title: str, max_len: int = 40) -> str:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BUILD REVIEW DOCX
+# Unchanged except: accepts fact_check_text and appends Fact Check section
 # ─────────────────────────────────────────────────────────────────────────────
-def build_review_docx(review_text: str, blog_title: str) -> bytes:
+def build_review_docx(review_text: str, blog_title: str, fact_check_text: str = "") -> bytes:
     doc = DocxDocument()
     for sec in doc.sections:
         sec.top_margin = Inches(1)
@@ -753,7 +882,7 @@ def build_review_docx(review_text: str, blog_title: str) -> bytes:
         sec.left_margin = Inches(1.2)
         sec.right_margin = Inches(1.2)
 
-    # Title block
+    # Title block — unchanged
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = p.add_run("LEAP SCHOLAR — BLOG REVIEW")
@@ -907,13 +1036,98 @@ def build_review_docx(review_text: str, blog_title: str) -> bytes:
             p.paragraph_format.space_after = Pt(4)
             p.add_run(s).font.size = Pt(11)
 
+    # ── Fact Check section appended at the end of the review doc ──
+    if fact_check_text and fact_check_text.strip():
+        doc.add_paragraph()
+        add_hr(doc, "7c3aed")
+        doc.add_paragraph()
+
+        h = doc.add_heading("🔬 Fact Check Report", 1)
+        if h.runs:
+            h.runs[0].font.color.rgb = RGBColor(0x7c, 0x3a, 0xed)
+
+        sub = doc.add_paragraph()
+        sub_r = sub.add_run(
+            "Independent verification of all facts, figures, and statistics in the blog. "
+            "Powered by live web search."
+        )
+        sub_r.italic = True
+        sub_r.font.size = Pt(10)
+        sub_r.font.color.rgb = RGBColor(0x64, 0x74, 0x8b)
+        doc.add_paragraph()
+
+        for raw_line in fact_check_text.split('\n'):
+            s = raw_line.strip()
+            if not s:
+                doc.add_paragraph(); continue
+
+            if s == "---FACT CHECK ITEMS---":
+                continue
+
+            elif s.startswith("FACT CHECK SUMMARY:"):
+                p = doc.add_paragraph()
+                r = p.add_run("Summary"); r.bold = True; r.font.size = Pt(12)
+                r.font.color.rgb = RGBColor(0x7c, 0x3a, 0xed)
+
+            elif (s.startswith("Total facts checked:")
+                  or s.startswith("✅ Verified:")
+                  or s.startswith("⚠️ Partially")
+                  or s.startswith("🔴 Incorrect")):
+                p = doc.add_paragraph()
+                p.paragraph_format.left_indent = Inches(0.2)
+                r = p.add_run(s); r.font.size = Pt(11)
+                if s.startswith("✅"):
+                    r.font.color.rgb = RGBColor(0x16, 0xa3, 0x4a)
+                elif s.startswith("⚠️"):
+                    r.font.color.rgb = RGBColor(0xd9, 0x77, 0x06)
+                elif s.startswith("🔴"):
+                    r.font.color.rgb = RGBColor(0xdc, 0x26, 0x26)
+
+            elif s.startswith("FACT:"):
+                doc.add_paragraph()
+                p = doc.add_paragraph()
+                r1 = p.add_run("FACT: "); r1.bold = True; r1.font.size = Pt(11)
+                r1.font.color.rgb = RGBColor(0x2e, 0x40, 0x57)
+                p.add_run(s.replace("FACT:", "").strip()).font.size = Pt(11)
+
+            elif s.startswith("VERDICT:"):
+                val = s.replace("VERDICT:", "").strip()
+                p = doc.add_paragraph()
+                p.paragraph_format.left_indent = Inches(0.2)
+                r = p.add_run(f"Verdict: {val}"); r.bold = True; r.font.size = Pt(11)
+                if "VERIFIED" in val:
+                    r.font.color.rgb = RGBColor(0x16, 0xa3, 0x4a)
+                elif "INCORRECT" in val:
+                    r.font.color.rgb = RGBColor(0xdc, 0x26, 0x26)
+                else:
+                    r.font.color.rgb = RGBColor(0xd9, 0x77, 0x06)
+
+            elif s.startswith("DETAIL:"):
+                p = doc.add_paragraph()
+                p.paragraph_format.left_indent = Inches(0.2)
+                r1 = p.add_run("Detail: "); r1.bold = True; r1.font.size = Pt(10)
+                r1.font.color.rgb = RGBColor(0x64, 0x74, 0x8b)
+                p.add_run(s.replace("DETAIL:", "").strip()).font.size = Pt(10)
+
+            elif s.startswith("SOURCE:"):
+                p = doc.add_paragraph()
+                p.paragraph_format.left_indent = Inches(0.2)
+                r1 = p.add_run("Source: "); r1.bold = True; r1.font.size = Pt(10)
+                r1.font.color.rgb = RGBColor(0x64, 0x74, 0x8b)
+                p.add_run(s.replace("SOURCE:", "").strip()).font.size = Pt(10)
+
+            else:
+                p = doc.add_paragraph()
+                p.paragraph_format.space_after = Pt(3)
+                p.add_run(s).font.size = Pt(10)
+
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BUILD REWRITTEN BLOG DOCX
+# BUILD REWRITTEN BLOG DOCX — completely unchanged
 # ─────────────────────────────────────────────────────────────────────────────
 def build_rewritten_docx(rewritten_text: str, blog_title: str) -> bytes:
     doc = DocxDocument()
@@ -987,22 +1201,24 @@ def build_rewritten_docx(rewritten_text: str, blog_title: str) -> bytes:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SESSION STATE
+# SESSION STATE — added followup_count for CHANGE 3
 # ─────────────────────────────────────────────────────────────────────────────
 defaults = {
     "messages": [], "phase": "home", "doc_url": "",
     "blog_text": "", "blog_title": "",
     "review_bytes": None, "rewrite_bytes": None,
     "openai_history": [], "review_done": False,
+    "followup_count": 0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+MAX_FOLLOWUPS = 10
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SIDEBAR
-# FIX: st.secrets fallback so key can be pre-set on Streamlit Cloud
+# SIDEBAR — unchanged
 # ─────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
@@ -1033,7 +1249,7 @@ with st.sidebar:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HOME SCREEN
+# HOME SCREEN — card 3 updated to reflect Fact Check feature
 # ─────────────────────────────────────────────────────────────────────────────
 if st.session_state.phase == "home":
 
@@ -1065,9 +1281,9 @@ if st.session_state.phase == "home":
             <div class="card-desc">A fully rewritten version of your blog incorporating every fix — download-ready as a Word doc.</div>
         </div>
         <div class="card">
-            <div class="card-icon">📊</div>
-            <div class="card-title">Scorecard + SEO Audit</div>
-            <div class="card-desc">10-category scorecard, SEO compliance check, grammar audit, and a priority action list.</div>
+            <div class="card-icon">🔬</div>
+            <div class="card-title">Fact Check Report</div>
+            <div class="card-desc">Every stat, figure, and claim verified against live web sources — with ✅ / ⚠️ / 🔴 verdicts per fact.</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1098,16 +1314,16 @@ if st.session_state.phase == "home":
                     st.session_state.update({
                         "doc_url": url, "blog_text": blog_text,
                         "blog_title": blog_title, "phase": "chat",
-                        "review_done": False,
+                        "review_done": False, "followup_count": 0,
                         "messages": [{
                             "role": "ai",
                             "content": (
                                 f"✦ Document fetched: **{blog_title}**\n\n"
-                                "Running full review against Krutika's guidelines...\n\n"
+                                "Running full review + fact check against Krutika's guidelines...\n\n"
                                 "I'll produce:\n"
-                                "**① Section-wise Review Document** (.docx)\n"
+                                "**① Section-wise Review Document** — with 🔬 Fact Check Report (.docx)\n"
                                 "**② Rewritten Blog** (.docx)\n\n"
-                                "This will take 30–60 seconds. Hang tight."
+                                "This will take 60–90 seconds. Hang tight."
                             )
                         }]
                     })
@@ -1119,7 +1335,7 @@ if st.session_state.phase == "home":
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CHAT SCREEN
+# CHAT SCREEN — auto-trigger runs review + fact check in sequence
 # ─────────────────────────────────────────────────────────────────────────────
 else:
 
@@ -1152,16 +1368,29 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── AUTO-TRIGGER REVIEW ──
+    # ── AUTO-TRIGGER — guarded by review_done, fires exactly once ──
     if not st.session_state.review_done and st.session_state.blog_text:
-        with st.spinner("🔍 Krutika AI is reviewing your blog — 30–60 seconds..."):
+        with st.spinner("🔍 Krutika AI is reviewing + fact-checking your blog — 60–90 seconds..."):
             try:
+                # Call 1: main editorial review (unchanged behaviour)
                 raw = run_initial_review(api_key, st.session_state.blog_text)
                 review_text, rewritten_text = parse_response(raw)
 
-                st.session_state.review_bytes = build_review_docx(review_text, st.session_state.blog_title)
-                st.session_state.rewrite_bytes = build_rewritten_docx(rewritten_text, st.session_state.blog_title)
+                # Call 2: independent fact check with live web search
+                fact_check_raw = run_fact_check(api_key, st.session_state.blog_text)
+                fact_check_text = parse_fact_check(fact_check_raw)
+
+                # Build both docs — fact check appended to review doc
+                st.session_state.review_bytes = build_review_docx(
+                    review_text, st.session_state.blog_title, fact_check_text
+                )
+                st.session_state.rewrite_bytes = build_rewritten_docx(
+                    rewritten_text, st.session_state.blog_title
+                )
+
+                # Guard flipped — will not run again this session
                 st.session_state.review_done = True
+
                 st.session_state.openai_history = [
                     {"role": "user", "content": f"Review this Leap Scholar blog:\n\n{st.session_state.blog_text}"},
                     {"role": "assistant", "content": raw},
@@ -1169,9 +1398,11 @@ else:
                 st.session_state.messages.append({
                     "role": "ai",
                     "content": (
-                        f"✅ Review complete for **{st.session_state.blog_title}**\n\n"
+                        f"✅ Review + Fact Check complete for **{st.session_state.blog_title}**\n\n"
                         "Both documents are ready — download them below.\n\n"
-                        "You can also ask me follow-up questions:\n"
+                        "The **Review Document** includes a 🔬 **Fact Check Report** at the end "
+                        "with every stat and figure verified against live web sources.\n\n"
+                        "You can also ask follow-up questions:\n"
                         "- *'Rewrite only the introduction'*\n"
                         "- *'Give me 5 better FAQ questions'*\n"
                         "- *'Make the conclusion more punchy'*"
@@ -1186,7 +1417,7 @@ else:
                 })
                 st.rerun()
 
-    # ── Chat messages ──
+    # ── Chat messages — unchanged ──
     for msg in st.session_state.messages:
         if msg["role"] == "user":
             st.markdown(f"""
@@ -1203,7 +1434,7 @@ else:
                 <div class="bubble">{html}</div>
             </div>""", unsafe_allow_html=True)
 
-    # ── Download panel ──
+    # ── Download panel — unchanged ──
     if st.session_state.review_done and st.session_state.review_bytes:
         st.markdown("""
         <div style="background:rgba(34,197,94,0.05);border:1px solid rgba(34,197,94,0.15);
@@ -1218,7 +1449,7 @@ else:
         d1, d2 = st.columns(2)
         with d1:
             st.download_button(
-                "📋 Download Review (.docx)",
+                "📋 Download Review + Fact Check (.docx)",
                 data=st.session_state.review_bytes,
                 file_name=f"Review_{safe}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -1236,8 +1467,7 @@ else:
 
     st.markdown("<div style='height:120px'></div>", unsafe_allow_html=True)
 
-    # ── Follow-up input (single functional input — decorative duplicate removed) ──
-    # FIX: guard added so follow-up only fires after review is complete
+    # ── Follow-up input — CHANGE 3: cap at MAX_FOLLOWUPS ──
     with st.container():
         c1, c2 = st.columns([6, 1])
         with c1:
@@ -1255,6 +1485,11 @@ else:
                 st.warning("Please wait for the review to complete before sending follow-up questions.")
             elif not st.session_state.openai_history:
                 st.warning("No review context found. Please use '🔄 New Review' to start fresh.")
+            elif st.session_state.followup_count >= MAX_FOLLOWUPS:
+                st.warning(
+                    f"You've reached the {MAX_FOLLOWUPS} follow-up limit for this session. "
+                    "Use '🔄 New Review' in the sidebar to start fresh."
+                )
             else:
                 st.session_state.messages.append({"role": "user", "content": follow_up})
                 with st.spinner("Krutika AI is thinking..."):
@@ -1265,6 +1500,7 @@ else:
                             {"role": "assistant", "content": reply},
                         ]
                         st.session_state.messages.append({"role": "ai", "content": reply})
+                        st.session_state.followup_count += 1
                     except Exception as e:
                         st.session_state.messages.append({"role": "ai", "content": f"❌ Error: {e}"})
                 st.rerun()
