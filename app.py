@@ -62,21 +62,16 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"],
     position: relative;
 }
 .hero-logo {
-    width: 52px; height: 52px;
+    width: 120px; height: 60px;
     margin: 0 auto 28px;
-    background: linear-gradient(135deg, #22c55e, #16a34a);
-    border-radius: 16px;
+    background: transparent;
+    border-radius: 0;
     display: flex; align-items: center; justify-content: center;
-    font-size: 26px;
-    box-shadow: 0 0 40px rgba(34,197,94,0.3), 0 0 80px rgba(34,197,94,0.1);
     position: relative;
+    filter: drop-shadow(0 0 18px rgba(34,197,94,0.45));
 }
 .hero-logo::after {
-    content: '';
-    position: absolute; inset: -3px;
-    border-radius: 18px;
-    background: linear-gradient(135deg, rgba(34,197,94,0.4), transparent);
-    z-index: -1;
+    display: none;
 }
 .hero-title {
     font-family: 'Syne', sans-serif !important;
@@ -1628,10 +1623,10 @@ if st.session_state.phase == "home":
     <div class="hero-wrap">
         <div class="hero-logo">
             <img src="https://d14lg9nzq1d3lc.cloudfront.net/advance-website/assets/images/company-logo/logo.svg"
-                 style="width:36px;height:36px;object-fit:contain;filter:brightness(0) invert(1);" alt="Leap Finance" />
+                 style="width:110px;height:52px;object-fit:contain;filter:brightness(0) invert(1);" alt="Leap Finance" />
         </div>
         <div class="hero-title">Ready for your<br><span>Blog Review?</span></div>
-        <p class="hero-sub">Paste a Google Doc link and I'll review it in Krutika's style,<br>
+        <p class="hero-sub" style="text-align:center;width:100%;display:block;margin-left:auto;margin-right:auto;">Paste a Google Doc link and I'll review it in Krutika's style,<br>
         section by section, with fixes and a fully rewritten version.</p>
     </div>
     """, unsafe_allow_html=True)
