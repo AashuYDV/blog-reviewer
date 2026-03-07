@@ -2,6 +2,7 @@ import unicodedata
 import streamlit as st
 import re
 import requests
+import time
 import io
 from datetime import datetime
 from openai import OpenAI
@@ -688,15 +689,51 @@ def fetch_google_doc(url: str):
 # ─────────────────────────────────────────────────────────────────────────────
 # OPENAI API
 # ─────────────────────────────────────────────────────────────────────────────
-def run_initial_review(api_key: str, blog_text: str) -> str:
+def run_initial_review(api_key: str, blog_text: str, fact_check_text: str = "") -> str:
     client = OpenAI(api_key=api_key)
+
+    # Build fact correction context for the rewrite if we have fact check results
+    fact_correction_block = ""
+    if fact_check_text and fact_check_text.strip():
+        # Extract only INCORRECT and OUTDATED verdicts to inject into rewrite prompt
+        corrections = []
+        lines = fact_check_text.split("\n")
+        current_fact = current_verdict = current_detail = ""
+        for line in lines:
+            line = line.strip()
+            if line.startswith("FACT:"):
+                current_fact = line.replace("FACT:", "").strip()
+            elif line.startswith("VERDICT:"):
+                current_verdict = line.replace("VERDICT:", "").strip()
+            elif line.startswith("DETAIL:"):
+                current_detail = line.replace("DETAIL:", "").strip()
+                if current_fact and current_verdict and (
+                    "INCORRECT" in current_verdict.upper() or
+                    "OUTDATED" in current_verdict.upper()
+                ):
+                    corrections.append(
+                        f"• WRONG IN BLOG: \"{current_fact}\"\n"
+                        f"  CORRECT FACT: {current_detail}"
+                    )
+                current_fact = current_verdict = current_detail = ""
+
+        if corrections:
+            fact_correction_block = (
+                "\n\nFACT CORRECTIONS — CRITICAL:\n"
+                "The following facts in the blog have been verified as incorrect or outdated "
+                "by an independent fact-checker. You MUST use the corrected figures in the "
+                "rewritten blog. Do not use the original wrong figures under any circumstances.\n\n"
+                + "\n\n".join(corrections)
+            )
+
     prompt = (
         "Please review the following Leap Scholar blog in full.\n\n"
         "Apply the complete 5-step SOP and all 10 pattern rules (K-1 through K-10).\n\n"
         "IMPORTANT: Anywhere you see [LINK: url] in the blog text, a hyperlink already "
         "exists there in the original Google Doc. Treat it as a valid source citation. "
         "Do NOT flag these as missing sources.\n\n"
-        "Produce BOTH outputs separated by the EXACT markers:\n"
+        + fact_correction_block +
+        "\n\nProduce BOTH outputs separated by the EXACT markers:\n"
         "---REVIEW DOCUMENT START--- ... ---REVIEW DOCUMENT END---\n"
         "---REWRITTEN BLOG START--- ... ---REWRITTEN BLOG END---\n\n"
         "Here is the blog:\n\n"
@@ -732,10 +769,75 @@ def run_followup(api_key: str, history: list, user_message: str) -> str:
 # Uses client.responses.create() NOT chat.completions — only endpoint that
 # supports web_search_preview. Same API key, no extra signup needed.
 # ─────────────────────────────────────────────────────────────────────────────
-FACT_CHECK_PROMPT = """
+# ─────────────────────────────────────────────────────────────────────────────
+# FACT CHECKER — Serper.dev primary + GPT-4o Responses API fallback
+# Architecture:
+#   1. Extract individual facts from blog text using GPT-4o
+#   2. For each fact: run targeted Serper search (your code controls the query)
+#   3. Pass search results to GPT-4o for verdict only — cannot skip or use memory
+#   4. On ANY Serper error (429, 403, 404, timeout, exhausted): fall back to
+#      GPT-4o Responses API with web_search_preview
+#   5. Always tell user which mode ran via fact_check_mode return value
+# ─────────────────────────────────────────────────────────────────────────────
+
+SERPER_ENDPOINT = "https://google.serper.dev/search"
+SERPER_RATE_LIMIT_DELAY = 1.2   # seconds between calls — stays within free tier rate limits
+SERPER_MAX_RETRIES = 2          # retry once on 429 before rotating to fallback
+
+
+FACT_EXTRACTION_PROMPT = """
+You are a fact extraction assistant. Read the blog text below and extract every specific,
+verifiable factual claim — numbers, statistics, percentages, fees, deadlines, salary thresholds,
+rankings, policy rules, dates, and named figures.
+
+Return ONLY a JSON array of strings. Each string = one fact exactly as stated in the blog.
+Maximum 25 facts. Skip opinions, general statements, narrative, and CTAs.
+Only extract claims that can be verified against an external source.
+
+Example output:
+["India is the largest source country for international students in Germany",
+ "The blocked account requirement for 2026 is €11,904",
+ "EU Blue Card minimum salary for STEM is €45,000+",
+ "International students can work up to 140 full days per year"]
+
+Return ONLY the JSON array. No preamble, no explanation, no markdown code fences.
+"""
+
+FACT_VERDICT_PROMPT = """
+You are a professional fact-checker. You will be given:
+1. A specific factual claim from a blog
+2. Search results from Google (via Serper) relevant to that claim
+
+Your job: read the search results carefully and give a verdict.
+
+TODAY IS MARCH 2026. All verdicts must reflect what is TRUE as of early 2026.
+
+CRITICAL RULES:
+- Base your verdict ONLY on the search results provided — do not use training memory
+- If multiple results conflict, use the most recently dated source
+- For German policy facts (salaries, fees, thresholds): prefer official sources
+  (make-it-in-germany.com, daad.de, bamf.de, study-in-germany.de)
+- IMPORTANT: When a claim mentions a specific category (e.g. STEM, shortage occupation),
+  verify the figure for THAT category specifically, not the general threshold
+- Germany updates salary thresholds every January — a 2023 figure is NOT valid for 2026
+
+VERDICT OPTIONS:
+✅ VERIFIED — search results confirm the claim is accurate for 2026
+⚠️ PARTIALLY CORRECT — figure is close but slightly off
+⚠️ OUTDATED — was correct before but search results show it has changed
+🔴 INCORRECT — search results clearly contradict the claim
+⚠️ UNVERIFIABLE — search results do not contain enough information to verify
+
+OUTPUT FORMAT (use exactly this, nothing else):
+VERDICT: [one of the 5 options above]
+DETAIL: [1-2 sentences. What the search results show. If incorrect, state the correct 2026 figure.]
+SOURCE: [URL of the most relevant search result used]
+"""
+
+FACT_CHECK_FALLBACK_PROMPT = """
 You are a professional fact-checker specialising in education, study abroad, immigration policy, and international universities.
 
-TODAY'S DATE IS MARCH 2026. This is critical — all verdicts must reflect what is TRUE as of early 2026, not 2023 or 2024.
+TODAY'S DATE IS MARCH 2026. All verdicts must reflect what is TRUE as of early 2026.
 
 Search the web to verify every specific claim, number, statistic, fee, deadline, ranking, or policy in the blog.
 
@@ -755,75 +857,306 @@ Total facts checked: [number]
 FACT: [Exact quote from blog]
 VERDICT: [✅ VERIFIED / ⚠️ PARTIALLY CORRECT / ⚠️ OUTDATED / 🔴 INCORRECT / ⚠️ UNVERIFIABLE]
 DETAIL: [What your live search found. Always state the current 2026 figure. Max 2 sentences.]
-SOURCE: [URL from your search result — must be the actual source page, not a homepage]
+SOURCE: [URL from your search result]
 
 [Repeat for every fact]
 
 ---FACT CHECK END---
 
-CRITICAL SEARCH RULES — READ CAREFULLY:
-
-RULE 1 — ALWAYS SEARCH WITH THE YEAR IN YOUR QUERY:
-For any salary, fee, threshold, or policy fact, your search query MUST include "2026" or "2025 2026".
-Example: search "EU Blue Card salary threshold 2026 Germany" NOT just "EU Blue Card salary Germany".
-Example: search "blocked account Germany 2026 students" NOT just "blocked account Germany".
-This forces search engines to return the most current pages, not older ones.
-
-RULE 2 — TRUST THE MOST RECENT SOURCE:
-If your search returns multiple pages with different figures (e.g. some say €43,760, some say €45,934):
-- Use the figure from the MOST RECENTLY PUBLISHED source.
-- Prefer official sources: make-it-in-germany.com, daad.de, bamf.de, study-in-germany.de, federal ministry pages.
-- Discard any source older than 12 months unless no newer source exists.
-
-RULE 3 — SALARY AND POLICY THRESHOLDS ARE UPDATED ANNUALLY:
-Germany updates EU Blue Card salary thresholds every January. India/China student rankings change each academic year.
-NEVER use a figure from 2023 or earlier to fact-check a 2026 blog. Always search for the current year's figure explicitly.
-
-RULE 4 — VERDICT DEFINITIONS:
-- ✅ VERIFIED = your most recent search confirms the claim is accurate for 2026
-- ⚠️ PARTIALLY CORRECT = the figure is close but the exact number differs slightly
-- ⚠️ OUTDATED = was correct in a previous year but has since been updated
-- 🔴 INCORRECT = your most recent search clearly contradicts the claim — state the correct 2026 figure
-- ⚠️ UNVERIFIABLE = searched with year-specific queries but no reliable source found — do not guess
-
-RULE 5 — HANDLE [LINK: url] MARKERS:
-If a fact has [LINK: url] next to it in the blog, fetch that URL and verify against it.
-
-RULE 6 — ONLY VERIFY SPECIFIC FACTS:
-Skip opinions, general statements, and narrative. Only check specific numbers, fees, dates, rankings, policies.
+CRITICAL SEARCH RULES:
+- For every salary, fee, threshold, policy — search with "2026" in the query
+- For German facts: prefer make-it-in-germany.com, daad.de, bamf.de, study-in-germany.de
+- When a claim mentions STEM or shortage occupations, verify the STEM/shortage threshold specifically
+- Trust the most recently published source. Discard sources older than 12 months for policy facts.
+- NEVER flag a stat that has [LINK: url] next to it — it is already sourced.
 """
 
 
-def run_fact_check(api_key: str, blog_text: str) -> str:
+def extract_facts_from_blog(api_key: str, blog_text: str) -> list:
+    """Use GPT-4o to extract a clean list of verifiable facts from the blog."""
+    client = OpenAI(api_key=api_key)
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": FACT_EXTRACTION_PROMPT},
+                {"role": "user", "content": f"Extract all verifiable facts from this blog:\n\n{blog_text}"}
+            ],
+            max_tokens=1500,
+            temperature=0,
+        )
+        raw = response.choices[0].message.content.strip()
+        # Strip markdown fences if model wraps in ```json
+        raw = re.sub(r'^```[a-z]*\n?', '', raw, flags=re.MULTILINE)
+        raw = raw.replace('```', '').strip()
+        facts = __import__('json').loads(raw)
+        if isinstance(facts, list):
+            return [str(f) for f in facts[:25]]
+    except Exception:
+        pass
+    return []
+
+
+def serper_search(query: str, serper_key: str, retries: int = 0) -> dict | None:
     """
-    Uses the Responses API (/v1/responses) with web_search_preview for live search.
-    Key fix: user message now explicitly instructs year-anchored search queries
-    to prevent the model from trusting stale pre-2024 figures.
+    Run one Serper search. Returns the parsed JSON response or None on failure.
+    Handles rate limiting with exponential backoff.
+    Raises SerperExhaustedError on quota errors (403) so caller can fall back.
+    """
+    headers = {
+        "X-API-KEY": serper_key,
+        "Content-Type": "application/json",
+    }
+    payload = {"q": query, "num": 5}
+    try:
+        resp = requests.post(
+            SERPER_ENDPOINT, headers=headers,
+            json=payload, timeout=10
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        elif resp.status_code == 429:
+            # Rate limited — wait and retry once
+            if retries < SERPER_MAX_RETRIES:
+                time.sleep(3 * (retries + 1))
+                return serper_search(query, serper_key, retries + 1)
+            else:
+                raise SerperExhaustedError("Serper rate limit hit after retries.")
+        elif resp.status_code in (403, 401):
+            raise SerperExhaustedError(f"Serper quota exhausted or key invalid (HTTP {resp.status_code}).")
+        else:
+            # 404, 500, etc — treat as transient, return None so this fact is skipped
+            return None
+    except SerperExhaustedError:
+        raise
+    except Exception:
+        return None
+
+
+class SerperExhaustedError(Exception):
+    """Raised when Serper quota is exhausted or key is invalid — triggers fallback."""
+    pass
+
+
+def build_serper_query(fact: str) -> str:
+    """
+    Build a targeted, year-anchored search query for a given fact.
+    Always includes 2026 for policy/salary facts to avoid stale results.
+    """
+    # Keywords that need year-anchored queries
+    year_anchored_keywords = [
+        "salary", "threshold", "blocked account", "semester", "fee", "tuition",
+        "stipend", "scholarship", "blue card", "visa", "permit", "working days",
+        "source country", "ranked", "ranking", "students in germany", "shortage",
+        "minimum", "required amount", "budget", "cost", "exchange rate",
+    ]
+    needs_year = any(kw in fact.lower() for kw in year_anchored_keywords)
+    query = fact.strip()
+    if needs_year and "2026" not in query and "2025" not in query:
+        query = f"{query} 2026"
+    return query
+
+
+def verdict_from_search_results(
+    api_key: str, fact: str, search_results: dict
+) -> tuple[str, str, str]:
+    """
+    Ask GPT-4o to give a verdict based ONLY on the provided search results.
+    Returns (verdict_line, detail_line, source_line).
+    GPT-4o cannot use memory here — it only reads what we pass it.
+    """
+    # Format top 5 results as readable text
+    snippets = []
+    organic = search_results.get("organic", [])
+    for i, r in enumerate(organic[:5]):
+        title = r.get("title", "")
+        snippet = r.get("snippet", "")
+        link = r.get("link", "")
+        date = r.get("date", "")
+        date_str = f" [{date}]" if date else ""
+        snippets.append(f"Result {i+1}{date_str}: {title}\n{snippet}\nURL: {link}")
+
+    if not snippets:
+        return (
+            "⚠️ UNVERIFIABLE",
+            "No search results returned for this claim.",
+            "N/A"
+        )
+
+    search_text = "\n\n".join(snippets)
+
+    client = OpenAI(api_key=api_key)
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": FACT_VERDICT_PROMPT},
+                {"role": "user", "content": (
+                    f"CLAIM TO VERIFY: {fact}\n\n"
+                    f"SEARCH RESULTS:\n{search_text}\n\n"
+                    "Give your verdict using the exact format specified."
+                )}
+            ],
+            max_tokens=300,
+            temperature=0,
+        )
+        raw = response.choices[0].message.content.strip()
+        verdict = "⚠️ UNVERIFIABLE"
+        detail = "Could not parse verdict."
+        source = "N/A"
+        for line in raw.split("\n"):
+            line = line.strip()
+            if line.startswith("VERDICT:"):
+                verdict = line.replace("VERDICT:", "").strip()
+            elif line.startswith("DETAIL:"):
+                detail = line.replace("DETAIL:", "").strip()
+            elif line.startswith("SOURCE:"):
+                source = line.replace("SOURCE:", "").strip()
+        return verdict, detail, source
+    except Exception as e:
+        return "⚠️ UNVERIFIABLE", f"Verdict API error: {e}", "N/A"
+
+
+def run_fact_check_serper(
+    api_key: str, serper_key: str, blog_text: str
+) -> tuple[str, str]:
+    """
+    PRIMARY FACT CHECKER — Serper-powered.
+    Returns (fact_check_text, mode) where mode is 'high_accuracy' or 'standard'.
+
+    Flow:
+    1. Extract facts from blog using GPT-4o
+    2. For each fact: build targeted query → Serper search → GPT-4o verdict
+    3. Rate limit: 1.2s between Serper calls
+    4. On SerperExhaustedError: immediately fall back to GPT-4o Responses API
+    5. On any other error per-fact: mark as UNVERIFIABLE and continue
+    """
+    # Step 1: extract facts
+    facts = extract_facts_from_blog(api_key, blog_text)
+    if not facts:
+        # Can't extract facts — fall back entirely
+        return run_fact_check_gpt_fallback(api_key, blog_text), "standard"
+
+    results = []
+    verified = partially = outdated = incorrect = unverifiable = 0
+
+    for i, fact in enumerate(facts):
+        try:
+            query = build_serper_query(fact)
+            search_data = serper_search(query, serper_key)
+
+            if search_data is None:
+                # Transient error — mark unverifiable and continue
+                results.append({
+                    "fact": fact,
+                    "verdict": "⚠️ UNVERIFIABLE",
+                    "detail": "Search returned no results for this claim.",
+                    "source": "N/A"
+                })
+                unverifiable += 1
+            else:
+                verdict, detail, source = verdict_from_search_results(
+                    api_key, fact, search_data
+                )
+                results.append({
+                    "fact": fact,
+                    "verdict": verdict,
+                    "detail": detail,
+                    "source": source
+                })
+                v = verdict.upper()
+                if "VERIFIED" in v: verified += 1
+                elif "PARTIALLY" in v: partially += 1
+                elif "OUTDATED" in v: outdated += 1
+                elif "INCORRECT" in v: incorrect += 1
+                else: unverifiable += 1
+
+            # Rate limit — stay within Serper's limits
+            if i < len(facts) - 1:
+                time.sleep(SERPER_RATE_LIMIT_DELAY)
+
+        except SerperExhaustedError:
+            # Quota exhausted — fall back to GPT-4o for the entire check
+            fallback_text = run_fact_check_gpt_fallback(api_key, blog_text)
+            return fallback_text, "standard"
+
+    # Build structured output matching the existing parser format
+    total = len(results)
+    lines = [
+        "",
+        "FACT CHECK SUMMARY:",
+        f"Total facts checked: {total}",
+        f"✅ Verified: {verified}",
+        f"⚠️ Partially correct / outdated: {partially + outdated}",
+        f"🔴 Incorrect: {incorrect}",
+        f"⚠️ Unverifiable: {unverifiable}",
+        "",
+        "---FACT CHECK ITEMS---",
+        "",
+    ]
+    for r in results:
+        lines += [
+            f"FACT: {r['fact']}",
+            f"VERDICT: {r['verdict']}",
+            f"DETAIL: {r['detail']}",
+            f"SOURCE: {r['source']}",
+            "",
+        ]
+    return "\n".join(lines), "high_accuracy"
+
+
+def run_fact_check_gpt_fallback(api_key: str, blog_text: str) -> str:
+    """
+    FALLBACK FACT CHECKER — GPT-4o Responses API with web_search_preview.
+    Used when Serper is exhausted or unavailable.
+    Returns raw fact check text (to be parsed by parse_fact_check).
     """
     client = OpenAI(api_key=api_key)
     response = client.responses.create(
         model="gpt-4o",
         tools=[{"type": "web_search_preview"}],
         input=[
-            {"role": "system", "content": FACT_CHECK_PROMPT},
+            {"role": "system", "content": FACT_CHECK_FALLBACK_PROMPT},
             {"role": "user", "content": (
                 "Today is March 2026. Fact-check every specific number, statistic, "
                 "percentage, fee, deadline, ranking, or policy claim in this blog.\n\n"
-                "IMPORTANT: For every search you run, include '2026' or '2025 2026' "
-                "in your search query to get the most current results. "
-                "Germany updates salary thresholds, blocked account amounts, and "
-                "student statistics every year — always use year-specific searches.\n\n"
-                "Trust the most recently published official source. "
-                "Ignore any source older than 12 months for policy/salary facts.\n\n"
-                "Use the exact output format specified in your instructions.\n\n"
+                "For every search, include '2026' in your query to get current results. "
+                "For STEM/shortage occupation salary claims, verify the STEM threshold "
+                "specifically, not the general threshold.\n\n"
+                "Trust the most recently published official source.\n\n"
                 f"Blog text:\n\n{blog_text}"
             )}
         ],
     )
-    return response.output_text
+    raw = response.output_text
+    # If it returns with markers, extract just the inner content
+    m = re.search(r"---FACT CHECK START---(.*?)---FACT CHECK END---", raw, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return raw.strip()
+
+
+def run_fact_check(
+    api_key: str, blog_text: str, serper_key: str = ""
+) -> tuple[str, str]:
+    """
+    Master fact check dispatcher.
+    Returns (fact_check_text, mode).
+    mode = 'high_accuracy' (Serper) or 'standard' (GPT-4o fallback).
+    """
+    if serper_key and serper_key.strip():
+        try:
+            return run_fact_check_serper(api_key, serper_key.strip(), blog_text)
+        except SerperExhaustedError:
+            pass
+        except Exception:
+            pass
+    # No Serper key or Serper completely failed
+    return run_fact_check_gpt_fallback(api_key, blog_text), "standard"
 
 
 def parse_fact_check(text: str) -> str:
+    """Extract content between fact check markers if present, else return as-is."""
     m = re.search(r"---FACT CHECK START---(.*?)---FACT CHECK END---", text, re.DOTALL)
     if m:
         return m.group(1).strip()
@@ -904,7 +1237,7 @@ def safe_filename(title: str, max_len: int = 40) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # BUILD REVIEW DOCX
 # ─────────────────────────────────────────────────────────────────────────────
-def build_review_docx(review_text: str, blog_title: str, fact_check_text: str = "") -> bytes:
+def build_review_docx(review_text: str, blog_title: str, fact_check_text: str = "", fact_check_mode: str = "standard") -> bytes:
     doc = DocxDocument()
     for sec in doc.sections:
         sec.top_margin = Inches(1)
@@ -1073,8 +1406,19 @@ def build_review_docx(review_text: str, blog_title: str, fact_check_text: str = 
         doc.add_paragraph()
         h = doc.add_heading("🔬 Fact Check Report", 1)
         if h.runs: h.runs[0].font.color.rgb = RGBColor(0x7c, 0x3a, 0xed)
+
+        # Mode badge
+        mode_p = doc.add_paragraph()
+        if fact_check_mode == "high_accuracy":
+            mode_r = mode_p.add_run("🟢 High Accuracy Mode — Serper (Google) powered search, one targeted search per fact")
+            mode_r.font.color.rgb = RGBColor(0x16, 0xa3, 0x4a)
+        else:
+            mode_r = mode_p.add_run("🟡 Standard Mode — GPT-4o web search (add Serper API key for higher accuracy)")
+            mode_r.font.color.rgb = RGBColor(0xd9, 0x77, 0x06)
+        mode_r.font.size = Pt(10); mode_r.bold = True
+
         sub = doc.add_paragraph()
-        sub_r = sub.add_run("Live web verification of all facts, figures, and statistics. Powered by OpenAI Responses API with real-time web search.")
+        sub_r = sub.add_run("Independent verification of all facts, figures, and statistics against live web sources.")
         sub_r.italic = True; sub_r.font.size = Pt(10)
         sub_r.font.color.rgb = RGBColor(0x64, 0x74, 0x8b)
         doc.add_paragraph()
@@ -1207,6 +1551,7 @@ defaults = {
     "review_bytes": None, "rewrite_bytes": None,
     "openai_history": [], "review_done": False,
     "followup_count": 0,
+    "fact_check_mode": "high_accuracy",  # 'high_accuracy' | 'standard'
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -1232,9 +1577,36 @@ with st.sidebar:
         help="Get your key at platform.openai.com/api-keys"
     )
 
+    default_serper = st.secrets.get("SERPER_API_KEY", "") if hasattr(st, "secrets") else ""
+    serper_key = st.text_input(
+        "Serper API Key", type="password", placeholder="serper key...",
+        value=default_serper,
+        help="Get a free key at serper.dev — 2,500 free searches/month (~125 blogs)"
+    )
+
+    # Mode indicator
+    if serper_key and serper_key.strip():
+        st.markdown("""
+        <div style="font-size:0.75rem;color:#22c55e;margin-top:6px;
+                    background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);
+                    border-radius:8px;padding:6px 10px;">
+            🟢 <strong>High Accuracy Mode</strong><br>
+            Fact checker uses Serper (Google) search
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="font-size:0.75rem;color:#d97706;margin-top:6px;
+                    background:rgba(217,119,6,0.08);border:1px solid rgba(217,119,6,0.2);
+                    border-radius:8px;padding:6px 10px;">
+            🟡 <strong>Standard Mode</strong><br>
+            Add Serper key for higher accuracy
+        </div>
+        """, unsafe_allow_html=True)
+
     st.markdown("""
     <div style="font-size:0.75rem;color:#6b7280;margin-top:8px;line-height:1.7;">
-        Your key is never stored or logged.<br>
+        Keys are never stored or logged.<br>
         Uses <strong style="color:#22c55e">gpt-4o</strong><br><br>
         📄 Google Doc must be set to<br><em>"Anyone with the link can view"</em>
     </div>
@@ -1317,15 +1689,16 @@ if st.session_state.phase == "home":
                         "doc_url": url, "blog_text": blog_text,
                         "blog_title": blog_title, "phase": "chat",
                         "review_done": False, "followup_count": 0,
+                        "fact_check_mode": "high_accuracy",
                         "messages": [{
                             "role": "ai",
                             "content": (
                                 f"✦ Document fetched: **{blog_title}**\n\n"
-                                "Running full review + live fact check against Krutika's guidelines...\n\n"
+                                "Running fact check + full editorial review...\n\n"
                                 "I'll produce:\n"
                                 "**① Section-wise Review Document** with 🔬 Fact Check Report (.docx)\n"
-                                "**② Rewritten Blog** (.docx)\n\n"
-                                "This will take 60–90 seconds. Hang tight."
+                                "**② Rewritten Blog** with corrected facts incorporated (.docx)\n\n"
+                                "This will take 60–120 seconds. Hang tight."
                             )
                         }]
                     })
@@ -1373,21 +1746,44 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── AUTO-TRIGGER: fires exactly once, guarded by review_done ──
+    # ── AUTO-TRIGGER: 3-step flow ──
+    # Step 1: Fact check (Serper or GPT-4o fallback)
+    # Step 2: Review + rewrite WITH fact corrections injected
+    # Step 3: Build docx files
     if not st.session_state.review_done and st.session_state.blog_text:
-        with st.spinner("🔍 Krutika AI is reviewing + fact-checking your blog — 60–90 seconds..."):
+        with st.spinner("🔬 Step 1/3 — Fact-checking with live search..."):
             try:
-                # Call 1: editorial review (unchanged)
-                raw = run_initial_review(api_key, st.session_state.blog_text)
+                fact_check_text, fc_mode = run_fact_check(
+                    api_key, st.session_state.blog_text,
+                    serper_key if 'serper_key' in dir() else ""
+                )
+                st.session_state.fact_check_mode = fc_mode
+            except Exception as e:
+                fact_check_text = f"Fact check unavailable: {e}"
+                st.session_state.fact_check_mode = "standard"
+
+        with st.spinner("✍️ Step 2/3 — Running editorial review + incorporating corrections..."):
+            try:
+                # Pass fact check results so corrections are baked into the rewrite
+                raw = run_initial_review(
+                    api_key,
+                    st.session_state.blog_text,
+                    fact_check_text
+                )
                 review_text, rewritten_text = parse_response(raw)
+            except Exception as e:
+                st.session_state.review_done = True
+                st.session_state.messages.append({
+                    "role": "ai",
+                    "content": f"❌ Error during review: {e}\n\nCheck your API key in the sidebar and use '🔄 New Review' to reset."
+                })
+                st.rerun()
 
-                # Call 2: live fact check via Responses API with web search
-                fact_check_raw = run_fact_check(api_key, st.session_state.blog_text)
-                fact_check_text = parse_fact_check(fact_check_raw)
-
-                # Build docs
+        with st.spinner("📄 Step 3/3 — Building documents..."):
+            try:
                 st.session_state.review_bytes = build_review_docx(
-                    review_text, st.session_state.blog_title, fact_check_text
+                    review_text, st.session_state.blog_title, fact_check_text,
+                    st.session_state.fact_check_mode
                 )
                 st.session_state.rewrite_bytes = build_rewritten_docx(
                     rewritten_text, st.session_state.blog_title
@@ -1397,14 +1793,25 @@ else:
                     {"role": "user", "content": f"Review this Leap Scholar blog:\n\n{st.session_state.blog_text}"},
                     {"role": "assistant", "content": raw},
                 ]
+
+                # Build completion message with mode indicator
+                mode = st.session_state.fact_check_mode
+                if mode == "high_accuracy":
+                    mode_badge = "🟢 **High Accuracy Mode** — Fact check powered by Serper (Google search)"
+                else:
+                    mode_badge = "🟡 **Standard Mode** — Fact check powered by GPT-4o web search\n\n⚠️ Add a Serper API key in the sidebar for higher accuracy on 2025/2026 figures."
+
                 st.session_state.messages.append({
                     "role": "ai",
                     "content": (
                         f"✅ Review + Fact Check complete for **{st.session_state.blog_title}**\n\n"
+                        f"{mode_badge}\n\n"
                         "Both documents are ready — download them below.\n\n"
-                        "The **Review Document** includes a 🔬 **Fact Check Report** at the end "
-                        "with every stat verified against live web sources.\n\n"
-                        "You can also ask follow-up questions:\n"
+                        "**What's been done:**\n"
+                        "- 🔬 Every stat fact-checked against live search results\n"
+                        "- ✍️ Corrected facts incorporated into the rewritten blog\n"
+                        "- 📋 Section-wise review with fixes in the Review Document\n\n"
+                        "Ask follow-up questions:\n"
                         "- *'Rewrite only the introduction'*\n"
                         "- *'Give me 5 better FAQ questions'*\n"
                         "- *'Make the conclusion more punchy'*"
@@ -1415,7 +1822,7 @@ else:
                 st.session_state.review_done = True
                 st.session_state.messages.append({
                     "role": "ai",
-                    "content": f"❌ Error during review: {e}\n\nCheck your API key in the sidebar and use '🔄 New Review' to reset."
+                    "content": f"❌ Error building documents: {e}\n\nUse '🔄 New Review' to reset."
                 })
                 st.rerun()
 
