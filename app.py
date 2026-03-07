@@ -735,9 +735,11 @@ def run_followup(api_key: str, history: list, user_message: str) -> str:
 FACT_CHECK_PROMPT = """
 You are a professional fact-checker specialising in education, study abroad, immigration policy, and international universities.
 
-Search the web to verify every specific claim, number, statistic, percentage, fee, deadline, ranking, or policy in the blog. ALWAYS use live web search — do not rely on memory alone, especially for anything from 2024 or 2025 onwards.
+TODAY'S DATE IS MARCH 2026. This is critical — all verdicts must reflect what is TRUE as of early 2026, not 2023 or 2024.
 
-OUTPUT FORMAT — use EXACTLY these markers and nothing else outside them:
+Search the web to verify every specific claim, number, statistic, fee, deadline, ranking, or policy in the blog.
+
+OUTPUT FORMAT — use EXACTLY these markers:
 
 ---FACT CHECK START---
 
@@ -752,33 +754,51 @@ Total facts checked: [number]
 
 FACT: [Exact quote from blog]
 VERDICT: [✅ VERIFIED / ⚠️ PARTIALLY CORRECT / ⚠️ OUTDATED / 🔴 INCORRECT / ⚠️ UNVERIFIABLE]
-DETAIL: [What your live search found. If incorrect, state the correct current figure. Max 2 sentences.]
-SOURCE: [URL or named source from your search result]
+DETAIL: [What your live search found. Always state the current 2026 figure. Max 2 sentences.]
+SOURCE: [URL from your search result — must be the actual source page, not a homepage]
 
 [Repeat for every fact]
 
 ---FACT CHECK END---
 
-RULES:
-- Search the web for EVERY specific number, percentage, fee, ranking, date, or policy claim
-- For anything from 2024 onwards, ALWAYS search — never assume from training memory
-- If a fact has [LINK: url] next to it, fetch that URL and verify the claim against it
-- ✅ VERIFIED = search confirms the claim is accurate and current
-- ⚠️ PARTIALLY CORRECT = number is close but slightly off
-- ⚠️ OUTDATED = was true before but search shows it has since changed
-- 🔴 INCORRECT = search clearly shows the claim is wrong — always state the correct figure
-- ⚠️ UNVERIFIABLE = searched but no reliable source found — do not guess
-- DETAIL = 1-2 sentences max, always grounded in what you actually found
-- Skip opinions and general statements — only verify specific factual claims
+CRITICAL SEARCH RULES — READ CAREFULLY:
+
+RULE 1 — ALWAYS SEARCH WITH THE YEAR IN YOUR QUERY:
+For any salary, fee, threshold, or policy fact, your search query MUST include "2026" or "2025 2026".
+Example: search "EU Blue Card salary threshold 2026 Germany" NOT just "EU Blue Card salary Germany".
+Example: search "blocked account Germany 2026 students" NOT just "blocked account Germany".
+This forces search engines to return the most current pages, not older ones.
+
+RULE 2 — TRUST THE MOST RECENT SOURCE:
+If your search returns multiple pages with different figures (e.g. some say €43,760, some say €45,934):
+- Use the figure from the MOST RECENTLY PUBLISHED source.
+- Prefer official sources: make-it-in-germany.com, daad.de, bamf.de, study-in-germany.de, federal ministry pages.
+- Discard any source older than 12 months unless no newer source exists.
+
+RULE 3 — SALARY AND POLICY THRESHOLDS ARE UPDATED ANNUALLY:
+Germany updates EU Blue Card salary thresholds every January. India/China student rankings change each academic year.
+NEVER use a figure from 2023 or earlier to fact-check a 2026 blog. Always search for the current year's figure explicitly.
+
+RULE 4 — VERDICT DEFINITIONS:
+- ✅ VERIFIED = your most recent search confirms the claim is accurate for 2026
+- ⚠️ PARTIALLY CORRECT = the figure is close but the exact number differs slightly
+- ⚠️ OUTDATED = was correct in a previous year but has since been updated
+- 🔴 INCORRECT = your most recent search clearly contradicts the claim — state the correct 2026 figure
+- ⚠️ UNVERIFIABLE = searched with year-specific queries but no reliable source found — do not guess
+
+RULE 5 — HANDLE [LINK: url] MARKERS:
+If a fact has [LINK: url] next to it in the blog, fetch that URL and verify against it.
+
+RULE 6 — ONLY VERIFY SPECIFIC FACTS:
+Skip opinions, general statements, and narrative. Only check specific numbers, fees, dates, rankings, policies.
 """
 
 
 def run_fact_check(api_key: str, blog_text: str) -> str:
     """
-    Runs on the Responses API (/v1/responses) with web_search_preview enabled.
-    This is the ONLY OpenAI endpoint that supports live web search.
-    The Chat Completions API (/v1/chat/completions) does NOT support it —
-    that's what caused the 400 error previously.
+    Uses the Responses API (/v1/responses) with web_search_preview for live search.
+    Key fix: user message now explicitly instructs year-anchored search queries
+    to prevent the model from trusting stale pre-2024 figures.
     """
     client = OpenAI(api_key=api_key)
     response = client.responses.create(
@@ -787,10 +807,15 @@ def run_fact_check(api_key: str, blog_text: str) -> str:
         input=[
             {"role": "system", "content": FACT_CHECK_PROMPT},
             {"role": "user", "content": (
-                "Fact-check every specific number, statistic, percentage, fee, "
-                "deadline, ranking, or policy claim in this blog. Search the web "
-                "to verify each one — especially anything from 2024 or 2025 onwards. "
-                "Use the exact output format specified.\n\n"
+                "Today is March 2026. Fact-check every specific number, statistic, "
+                "percentage, fee, deadline, ranking, or policy claim in this blog.\n\n"
+                "IMPORTANT: For every search you run, include '2026' or '2025 2026' "
+                "in your search query to get the most current results. "
+                "Germany updates salary thresholds, blocked account amounts, and "
+                "student statistics every year — always use year-specific searches.\n\n"
+                "Trust the most recently published official source. "
+                "Ignore any source older than 12 months for policy/salary facts.\n\n"
+                "Use the exact output format specified in your instructions.\n\n"
                 f"Blog text:\n\n{blog_text}"
             )}
         ],
