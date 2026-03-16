@@ -62,7 +62,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"],
     position: relative;
 }
 .hero-logo {
-    width: 200px; height: 80px;
+    width: 220px; height: 70px;
     margin: 0 auto 28px;
     background: transparent;
     border-radius: 0;
@@ -1679,7 +1679,7 @@ if st.session_state.phase == "home":
     <div class="hero-wrap">
         <div class="hero-logo">
             <img src="https://d14lg9nzq1d3lc.cloudfront.net/advance-website/assets/images/company-logo/logo.svg"
-                 style="width:200px;height:80px;object-fit:contain;filter:brightness(0) invert(1);" alt="Leap Finance" />
+                 style="width:220px;height:70px;object-fit:contain;filter:brightness(0) invert(1);" alt="Leap Finance" />
         </div>
         <div class="hero-title">Ready for your<br><span>Blog Review?</span></div>
         <p class="hero-sub" style="text-align:center;width:100%;display:block;margin-left:auto;margin-right:auto;">Paste a Google Doc link and I'll review it in Krutika's style,<br>
