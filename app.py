@@ -724,7 +724,7 @@ def fetch_google_doc(url: str):
 # ─────────────────────────────────────────────────────────────────────────────
 def run_initial_review(api_key: str, blog_text: str, fact_check_text: str = "") -> str:
     client = OpenAI(api_key=api_key)
-
+    today = datetime.now().strftime('%d %B %Y')
     # Build fact correction context for the rewrite if we have fact check results
     fact_correction_block = ""
     if fact_check_text and fact_check_text.strip():
@@ -760,6 +760,7 @@ def run_initial_review(api_key: str, blog_text: str, fact_check_text: str = "") 
             )
 
     prompt = (
+        f"Today's date is {today}. Use this exact date as the REVIEW DATE in your output.\n\n"
         "Please review the following Leap Scholar blog in full.\n\n"
         "Apply the complete 5-step SOP and all 10 pattern rules (K-1 through K-10).\n\n"
         "IMPORTANT: Anywhere you see [LINK: url] in the blog text, a hyperlink already "
