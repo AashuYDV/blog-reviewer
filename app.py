@@ -62,7 +62,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"],
     position: relative;
 }
 .hero-logo {
-    width: 240px; height: 70px;
+    width: 200px; height: 90px;
     margin: 0 auto 28px;
     background: transparent;
     border-radius: 0;
@@ -373,6 +373,17 @@ STEP 5 — FINAL CHECKS
 - No first-person phrases anywhere
 - NO Key Takeaways section
 - Exactly ONE CTA total
+
+STEP 6 — CROSS-CONSISTENCY CHECK (MANDATORY)
+Scan the ENTIRE blog for the same figure, date, fee, or statistic appearing in multiple sections.
+If ANY contradiction is found — flag it as a CRITICAL issue with BOTH conflicting values and their exact locations.
+Common patterns to check:
+- Same fee shown as two different amounts in different sections or tables
+- Two different exchange rates used in the same article
+- Same deadline stated differently in two places
+- Same statistic given different values in the introduction vs body
+- A table figure that contradicts a figure in prose nearby
+Flag format: "🔴 CRITICAL INCONSISTENCY: [Section A] states [value X] but [Section B] states [value Y] for the same figure. Fix: align to [correct value]."
 
 ════════════════════════════════════════
 KRUTIKA'S 10 PATTERN RULES (APPLY ALL)
@@ -707,18 +718,21 @@ def fetch_google_doc(url: str):
     return text, title
 
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # OPENAI API
 # ─────────────────────────────────────────────────────────────────────────────
 def run_initial_review(api_key: str, blog_text: str, fact_check_text: str = "") -> str:
     client = OpenAI(api_key=api_key)
     today = datetime.now().strftime('%d %B %Y')
+
     # Build fact correction context for the rewrite if we have fact check results
     fact_correction_block = ""
+    source_needed_block = ""
     if fact_check_text and fact_check_text.strip():
-        # Extract only INCORRECT and OUTDATED verdicts to inject into rewrite prompt
+        # Extract INCORRECT and OUTDATED verdicts — these go as hard corrections
         corrections = []
+        # Extract UNVERIFIABLE verdicts — these go as [SOURCE NEEDED: ...] markers
+        source_needed = []
         lines = fact_check_text.split("\n")
         current_fact = current_verdict = current_detail = ""
         for line in lines:
@@ -729,14 +743,15 @@ def run_initial_review(api_key: str, blog_text: str, fact_check_text: str = "") 
                 current_verdict = line.replace("VERDICT:", "").strip()
             elif line.startswith("DETAIL:"):
                 current_detail = line.replace("DETAIL:", "").strip()
-                if current_fact and current_verdict and (
-                    "INCORRECT" in current_verdict.upper() or
-                    "OUTDATED" in current_verdict.upper()
-                ):
-                    corrections.append(
-                        f"• WRONG IN BLOG: \"{current_fact}\"\n"
-                        f"  CORRECT FACT: {current_detail}"
-                    )
+                if current_fact and current_verdict:
+                    v = current_verdict.upper()
+                    if "INCORRECT" in v or "OUTDATED" in v:
+                        corrections.append(
+                            f"• WRONG IN BLOG: \"{current_fact}\"\n"
+                            f"  CORRECT FACT: {current_detail}"
+                        )
+                    elif "UNVERIFIABLE" in v:
+                        source_needed.append(current_fact)
                 current_fact = current_verdict = current_detail = ""
 
         if corrections:
@@ -748,15 +763,28 @@ def run_initial_review(api_key: str, blog_text: str, fact_check_text: str = "") 
                 + "\n\n".join(corrections)
             )
 
+        if source_needed:
+            source_needed_block = (
+                "\n\nUNVERIFIABLE FACTS — ADD SOURCE MARKERS:\n"
+                "The following claims could not be verified by the fact-checker. "
+                "In the rewritten blog, add [SOURCE NEEDED: specific official source name] "
+                "immediately after each of these claims. Name the specific source "
+                "(e.g. 'Coventry University admissions page', 'UK Home Office', 'BAMF Germany') "
+                "— never write a generic placeholder.\n\n"
+                + "\n".join(f"• \"{f}\"" for f in source_needed)
+            )
+
     prompt = (
         f"Today's date is {today}. Use this exact date as the REVIEW DATE in your output.\n\n"
         "Please review the following Leap Scholar blog in full.\n\n"
-        "Apply the complete 5-step SOP and all 10 pattern rules (K-1 through K-10).\n\n"
+        "Apply the complete 5-step SOP (including Step 6 cross-consistency check) "
+        "and all 10 pattern rules (K-1 through K-10).\n\n"
         "IMPORTANT: Anywhere you see [LINK: url] in the blog text, a hyperlink already "
         "exists there in the original Google Doc. Treat it as a valid source citation. "
         "Do NOT flag these as missing sources.\n\n"
-        + fact_correction_block +
-        "\n\nProduce BOTH outputs separated by the EXACT markers:\n"
+        + fact_correction_block
+        + source_needed_block
+        + "\n\nProduce BOTH outputs separated by the EXACT markers:\n"
         "---REVIEW DOCUMENT START--- ... ---REVIEW DOCUMENT END---\n"
         "---REWRITTEN BLOG START--- ... ---REWRITTEN BLOG END---\n\n"
         "Here is the blog:\n\n"
@@ -785,7 +813,6 @@ def run_followup(api_key: str, history: list, user_message: str) -> str:
         max_tokens=4000,
     )
     return response.choices[0].message.content
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1652,7 +1679,7 @@ if st.session_state.phase == "home":
     <div class="hero-wrap">
         <div class="hero-logo">
             <img src="https://d14lg9nzq1d3lc.cloudfront.net/advance-website/assets/images/company-logo/logo.svg"
-                 style="width:240px;height:70px;object-fit:contain;filter:brightness(0) invert(1);" alt="Leap Finance" />
+                 style="width:200px;height:90px;object-fit:contain;filter:brightness(0) invert(1);" alt="Leap Finance" />
         </div>
         <div class="hero-title">Ready for your<br><span>Blog Review?</span></div>
         <p class="hero-sub" style="text-align:center;width:100%;display:block;margin-left:auto;margin-right:auto;">Paste a Google Doc link and I'll review it in Krutika's style,<br>
