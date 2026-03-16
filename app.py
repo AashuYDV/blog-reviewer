@@ -374,17 +374,6 @@ STEP 5 — FINAL CHECKS
 - NO Key Takeaways section
 - Exactly ONE CTA total
 
-STEP 6 — CROSS-CONSISTENCY CHECK (MANDATORY)
-Scan the ENTIRE blog for the same figure, date, fee, or statistic appearing in multiple sections.
-If ANY contradiction is found — flag it as a CRITICAL issue with BOTH conflicting values and their exact locations.
-Common patterns to check:
-- Same fee shown as two different amounts in different sections or tables
-- Two different exchange rates used in the same article
-- Same deadline stated differently in two places
-- Same statistic given different values in the introduction vs body
-- A table figure that contradicts a figure in prose nearby
-Flag format: "🔴 CRITICAL INCONSISTENCY: [Section A] states [value X] but [Section B] states [value Y] for the same figure. Fix: align to [correct value]."
-
 ════════════════════════════════════════
 KRUTIKA'S 10 PATTERN RULES (APPLY ALL)
 ════════════════════════════════════════
