@@ -62,7 +62,7 @@ html, body, [data-testid="stAppViewContainer"], [data-testid="stMain"],
     position: relative;
 }
 .hero-logo {
-    width: 200px; height: 90px;
+    width: 230px; height: 60px;
     margin: 0 auto 28px;
     background: transparent;
     border-radius: 0;
@@ -318,13 +318,31 @@ STEP 1 — MACRO CHECK
 - Smooth transitions between sections
 
 STEP 2 — GRAMMAR & STYLE
-- Error-free grammar, spelling, punctuation
-- Sentences ≤25 words (flag unnecessarily long ones)
-- Passive voice ≤10%
-- Currency: ₹50,000 (NEVER Rs. or INR)
-- Dates: "31 January 2026" (NEVER Jan 31st)
+MANDATORY: You MUST find and list a minimum of 8–12 grammar/style issues per blog.
+Even well-written blogs will have subtle issues — you are required to hunt for ALL of these:
+- Subject-verb agreement errors (e.g., "students is", "data are/is" inconsistency)
+- Article errors (missing or wrong "a/an/the")
+- Preposition errors (e.g., "apply in" vs "apply to", "eligible for" vs "eligible to")
+- Comma splices (two independent clauses joined only by a comma)
+- Run-on sentences (multiple ideas without proper punctuation)
+- Sentences ≥25 words — flag EVERY single one, no exceptions
+- Passive voice constructions — flag every instance ("it is believed", "was noted")
+- Tense inconsistency (switching between present and past mid-paragraph)
+- Dangling modifiers or misplaced phrases
+- Redundant/wordy phrasing (e.g., "in order to" → "to"; "due to the fact that" → "because")
+- Incorrect capitalization of common nouns (e.g., "University" when not a proper name)
+- Missing Oxford/serial comma in lists of 3+ items
+- Wrong word choices (e.g., "less" vs "fewer", "which" vs "that", "amount" vs "number")
+- Currency: ₹50,000 (NEVER Rs. or INR) — flag every violation
+- Dates: "31 January 2026" (NEVER Jan 31st or 31/01/2026) — flag every violation
 - No slang, stereotypes, over-Westernised phrasing
 - Use "affordable" not "cheap"
+
+CRITICAL: The ---GRAMMAR & STYLE AUDIT--- section must contain AT LEAST 8 Original/Fix pairs.
+If you cannot find 8 issues in the above categories, you have not looked hard enough. Re-read.
+Every entry must follow exactly:
+Original: [exact sentence or phrase from the blog]
+Fix: [corrected version with brief reason]
 
 STEP 3 — SECTION-WISE EDITING
 
@@ -338,7 +356,10 @@ Introduction:
 Body:
 - Clear H2 → H3 hierarchy; no numbered bold text as sub-headings
 - Each section opens with a BLUF sentence
-- All data points have source attribution ([LINK: url] next to a stat = already sourced, do NOT flag it)
+- SOURCE AUDIT (MANDATORY): Scan every single data point. A [LINK: url] marker = already sourced (skip).
+  Any stat, fee, deadline, ranking, salary, policy figure with NO [LINK: url] = flag immediately as:
+  "🔴 Issue: No source for '[stat]'. Fix: Add [SOURCE NEEDED: suggested source type]"
+  You MUST flag each one individually. This is non-negotiable. Missing this = incomplete review.
 - No paragraphs >4 lines covering multiple ideas
 - Tables/bullets where data comparison appears
 - Key numbers, fees, dates in **bold**
@@ -374,17 +395,6 @@ STEP 5 — FINAL CHECKS
 - NO Key Takeaways section
 - Exactly ONE CTA total
 
-STEP 6 — CROSS-CONSISTENCY CHECK (MANDATORY)
-Scan the ENTIRE blog for the same figure, date, fee, or statistic appearing in multiple sections.
-If ANY contradiction is found — flag it as a CRITICAL issue with BOTH conflicting values and their exact locations.
-Common patterns to check:
-- Same fee shown as two different amounts in different sections or tables
-- Two different exchange rates used in the same article
-- Same deadline stated differently in two places
-- Same statistic given different values in the introduction vs body
-- A table figure that contradicts a figure in prose nearby
-Flag format: "🔴 CRITICAL INCONSISTENCY: [Section A] states [value X] but [Section B] states [value Y] for the same figure. Fix: align to [correct value]."
-
 ════════════════════════════════════════
 KRUTIKA'S 10 PATTERN RULES (APPLY ALL)
 ════════════════════════════════════════
@@ -408,11 +418,13 @@ Partial funding mentioned without total context = flag.
 "Show full sticker price vs. what student pays. For 2026, a US Master's often exceeds $100,000."
 
 K-5 — ALL STATS NEED SOURCE LINKS
-Any stat, policy update, ranking, fee, or deadline without attribution = flag individually.
-Fix format: "Add [SOURCE NEEDED: name the specific official body, e.g. 'Coventry University official admissions page', 'UK Home Office visa fees 2026', 'DAAD official scholarship page', 'BAMF Germany']"
-Never write a generic "please add a source" — always name the specific source the writer should find.
-EXCEPTION: If the stat already has a [LINK: url] marker next to it in the blog text,
-it is already sourced — do NOT flag it. Only flag stats with zero attribution.
+MANDATORY: Read EVERY sentence in the blog. For EVERY stat, policy update, ranking, fee, salary
+threshold, deadline, or factual claim:
+  → If it HAS a [LINK: url] marker immediately after it: ✅ Already sourced — do NOT flag.
+  → If it has NO [LINK: url] marker AND no named official source inline: 🔴 MUST be flagged.
+Flag format: "🔴 Issue: No source for '[exact claim]'. Fix: Add [SOURCE NEEDED: suggested official source]"
+You MUST flag EVERY unsourced stat individually — do not group them or skip any.
+A claim is only exempt from flagging if it has a [LINK: url] directly following it.
 
 K-6 — FINANCIAL DATA → TABLE
 Multiple financial figures in paragraph form = flag.
@@ -441,7 +453,7 @@ OUTPUT FORMAT — USE THESE EXACT MARKERS
 ---REVIEW DOCUMENT START---
 
 BLOG TITLE: [Extract from blog]
-REVIEW DATE: [Use the exact date provided in the user message — do not guess or leave as placeholder]
+REVIEW DATE: [Today's date]
 REVIEWER: Krutika AI — Leap Scholar Editorial System
 OVERALL STATUS: [APPROVED / APPROVED WITH MINOR EDITS / NEEDS REVISION / MAJOR REVISION REQUIRED]
 
@@ -487,33 +499,12 @@ Service/product page link: [✅/🔴]
 URL slug keyword-driven: [✅/🔴]
 
 ---GRAMMAR & STYLE AUDIT---
-Check EVERY category below. For each one, list every instance found.
-If nothing found in a category, write "✅ None found" — do NOT skip any category.
-Minimum 5 total issues must be reported across all categories unless the blog is genuinely near-perfect.
-
-CATEGORY 1 — COMMA SPLICES & RUN-ON SENTENCES:
-[List every instance. Format: Original: "..." / Fix: "..."]
-
-CATEGORY 2 — SENTENCES EXCEEDING 25 WORDS:
-[List every sentence over 25 words. Format: Original: "..." / Fix: shortened version]
-
-CATEGORY 3 — PASSIVE VOICE INSTANCES:
-[List every passive construction. Format: Original: "..." / Fix: active version]
-
-CATEGORY 4 — CURRENCY FORMAT VIOLATIONS (Rs./INR instead of ₹):
-[List every violation. Format: Original: "..." / Fix: "..."]
-
-CATEGORY 5 — DATE FORMAT VIOLATIONS (anything other than "DD Month YYYY"):
-[List every violation. Format: Original: "..." / Fix: "..."]
-
-CATEGORY 6 — FIRST-PERSON PHRASES:
-[List every instance of "Let me / I will / We will / Let's" etc. Format: Original: "..." / Fix: "..."]
-
-CATEGORY 7 — INFORMAL / OFF-BRAND PHRASING:
-[List casual fragments, slang, or non-mentor-like language. Format: Original: "..." / Fix: "..."]
-
-CATEGORY 8 — MISSING BOLD ON KEY NUMBERS, FEES, DATES:
-[List every key figure that should be bolded but isn't. Format: "£18,600 in [section name] — should be **£18,600**"]
+MANDATORY MINIMUM: List AT LEAST 8 grammar/style issues. Cover: long sentences (≥25 words),
+passive voice, article/preposition errors, comma splices, tense shifts, wordy phrasing,
+currency/date formatting, run-ons, and any other issues found.
+Original: [exact text]
+Fix: [corrected version — include brief reason e.g. "passive voice → active", "≥25 words → split"]
+[List EVERY issue found — minimum 8, no maximum]
 
 ---PRIORITY ACTION LIST---
 1. [CRITICAL] [action]
@@ -538,7 +529,7 @@ CATEGORY 8 — MISSING BOLD ON KEY NUMBERS, FEES, DATES:
 - No Key Takeaways section
 - Exactly ONE CTA in conclusion
 - 4–5 FAQs, each ≤100 words
-- [SOURCE NEEDED: name the specific official source, e.g. "Coventry University admissions page"] for every stat with no [LINK: url] marker
+- [SOURCE NEEDED: suggested source type] for every unsourced stat
 - [TABLE RECOMMENDED: describe content] where tables should be added
 
 ---REWRITTEN BLOG END---
@@ -594,7 +585,6 @@ NEVER approve numbered bold sub-points instead of H3s.
 NEVER approve first-person intro phrases.
 NEVER produce generic feedback — every comment must be specific to the actual blog text.
 NEVER flag a stat as missing a source if it has a [LINK: url] marker next to it — that marker means a hyperlink already exists in the original Google Doc.
-NEVER approve a blog where the same figure, fee, date, or statistic appears with two different values in different sections — always flag as CRITICAL INCONSISTENCY.
 
 ════════════════════════════════════════
 REVIEW COMMENT TONE
@@ -723,16 +713,12 @@ def fetch_google_doc(url: str):
 # ─────────────────────────────────────────────────────────────────────────────
 def run_initial_review(api_key: str, blog_text: str, fact_check_text: str = "") -> str:
     client = OpenAI(api_key=api_key)
-    today = datetime.now().strftime('%d %B %Y')
 
     # Build fact correction context for the rewrite if we have fact check results
     fact_correction_block = ""
-    source_needed_block = ""
     if fact_check_text and fact_check_text.strip():
-        # Extract INCORRECT and OUTDATED verdicts — these go as hard corrections
+        # Extract only INCORRECT and OUTDATED verdicts to inject into rewrite prompt
         corrections = []
-        # Extract UNVERIFIABLE verdicts — these go as [SOURCE NEEDED: ...] markers
-        source_needed = []
         lines = fact_check_text.split("\n")
         current_fact = current_verdict = current_detail = ""
         for line in lines:
@@ -743,15 +729,14 @@ def run_initial_review(api_key: str, blog_text: str, fact_check_text: str = "") 
                 current_verdict = line.replace("VERDICT:", "").strip()
             elif line.startswith("DETAIL:"):
                 current_detail = line.replace("DETAIL:", "").strip()
-                if current_fact and current_verdict:
-                    v = current_verdict.upper()
-                    if "INCORRECT" in v or "OUTDATED" in v:
-                        corrections.append(
-                            f"• WRONG IN BLOG: \"{current_fact}\"\n"
-                            f"  CORRECT FACT: {current_detail}"
-                        )
-                    elif "UNVERIFIABLE" in v:
-                        source_needed.append(current_fact)
+                if current_fact and current_verdict and (
+                    "INCORRECT" in current_verdict.upper() or
+                    "OUTDATED" in current_verdict.upper()
+                ):
+                    corrections.append(
+                        f"• WRONG IN BLOG: \"{current_fact}\"\n"
+                        f"  CORRECT FACT: {current_detail}"
+                    )
                 current_fact = current_verdict = current_detail = ""
 
         if corrections:
@@ -763,28 +748,16 @@ def run_initial_review(api_key: str, blog_text: str, fact_check_text: str = "") 
                 + "\n\n".join(corrections)
             )
 
-        if source_needed:
-            source_needed_block = (
-                "\n\nUNVERIFIABLE FACTS — ADD SOURCE MARKERS:\n"
-                "The following claims could not be verified by the fact-checker. "
-                "In the rewritten blog, add [SOURCE NEEDED: specific official source name] "
-                "immediately after each of these claims. Name the specific source "
-                "(e.g. 'Coventry University admissions page', 'UK Home Office', 'BAMF Germany') "
-                "— never write a generic placeholder.\n\n"
-                + "\n".join(f"• \"{f}\"" for f in source_needed)
-            )
-
     prompt = (
-        f"Today's date is {today}. Use this exact date as the REVIEW DATE in your output.\n\n"
+        f"TODAY'S DATE: {datetime.now().strftime('%d %B %Y')}. "
+        "Use this exact date for the REVIEW DATE field in your output. Do not use any other date.\n\n"
         "Please review the following Leap Scholar blog in full.\n\n"
-        "Apply the complete 5-step SOP (including Step 6 cross-consistency check) "
-        "and all 10 pattern rules (K-1 through K-10).\n\n"
+        "Apply the complete 5-step SOP and all 10 pattern rules (K-1 through K-10).\n\n"
         "IMPORTANT: Anywhere you see [LINK: url] in the blog text, a hyperlink already "
         "exists there in the original Google Doc. Treat it as a valid source citation. "
         "Do NOT flag these as missing sources.\n\n"
-        + fact_correction_block
-        + source_needed_block
-        + "\n\nProduce BOTH outputs separated by the EXACT markers:\n"
+        + fact_correction_block +
+        "\n\nProduce BOTH outputs separated by the EXACT markers:\n"
         "---REVIEW DOCUMENT START--- ... ---REVIEW DOCUMENT END---\n"
         "---REWRITTEN BLOG START--- ... ---REWRITTEN BLOG END---\n\n"
         "Here is the blog:\n\n"
@@ -1679,7 +1652,7 @@ if st.session_state.phase == "home":
     <div class="hero-wrap">
         <div class="hero-logo">
             <img src="https://d14lg9nzq1d3lc.cloudfront.net/advance-website/assets/images/company-logo/logo.svg"
-                 style="width:200px;height:90px;object-fit:contain;filter:brightness(0) invert(1);" alt="Leap Finance" />
+                 style="width:230px;height:60px;object-fit:contain;filter:brightness(0) invert(1);" alt="Leap Finance" />
         </div>
         <div class="hero-title">Ready for your<br><span>Blog Review?</span></div>
         <p class="hero-sub" style="text-align:center;width:100%;display:block;margin-left:auto;margin-right:auto;">Paste a Google Doc link and I'll review it in Krutika's style,<br>
